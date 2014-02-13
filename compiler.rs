@@ -6,6 +6,22 @@ fn main() {
     compile();
 }
 
+mod AccessFlags {
+    const PUBLIC: u16       = 0x0001;
+    const PRIVATE: u16      = 0x0002;
+    const PROTECTED: u16    = 0x0004;
+    const STATIC: u16       = 0x0008;
+    const FINAL: u16        = 0x0010;
+    const SUPER: u16        = 0x0020;
+    const VOLATILE: u16     = 0x0040;
+    const TRANSIENT: u16    = 0x0080;
+    const INTERFACE: u16    = 0x0200;
+    const ABSTRACT: u16     = 0x0400;
+    const SYNTHETIC: u16    = 0x1000;
+    const ANNOTATION: u16   = 0x2000;
+    const ENUM: u16         = 0x4000;
+}
+
 enum CPoolEntry {
     UTF8(~str),                     // value
     INTEGER(i32),                   // value
