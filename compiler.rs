@@ -1,5 +1,6 @@
 use std::io::File;
 use std::hashmap::HashMap;
+use std::to_bytes::ToBytes;
 
 fn main() {
     compile();
@@ -25,17 +26,118 @@ enum CPoolEntry {
 struct CPool {
     entries: ~[CPoolEntry],
     next_idx: u16,
-    kv_map: ~HashMap<uint, uint>,
-    vk_map: ~HashMap<uint, uint>
+    kv_map: ~HashMap<uint, u16>,
+    vk_map: ~HashMap<u16, uint>
 }
 
 impl CPool {
     fn new() -> CPool {
-        CPool {entries: ~[], next_idx: 1, kv_map: ~HashMap::<uint, uint>::new(), vk_map: ~HashMap::<uint, uint>::new()}
+        CPool {
+            entries: ~[], next_idx: 1, 
+            kv_map: ~HashMap::<uint, u16>::new(), 
+            vk_map: ~HashMap::<u16, uint>::new()
+        }
     }
 
     fn add_entry(&mut self, entry: CPoolEntry) {
+        let increment = match entry {
+            LONG(_) | DOUBLE(_) => 2,
+            _                   => 1
+        };
 
+        self.entries.push(entry);
+        self.kv_map.insert(self.entries.len() - 1, self.next_idx);
+        self.vk_map.insert(self.next_idx, self.entries.len() - 1);
+        self.next_idx += increment;
+    }
+
+    fn get<'a>(&'a self, idx: uint) -> &'a CPoolEntry {
+        &self.entries[idx]
+    }
+
+    fn vec_to_pool<'a>(&'a self, vec_idx: &uint) -> &'a u16 {
+        self.kv_map.get(vec_idx)
+    }
+
+    fn pool_to_vec<'a>(&'a self, pool_idx: &u16) -> &'a uint {
+        self.vk_map.get(pool_idx)
+    }
+
+    fn to_vec(&self) -> ~[u8] {
+        let mut buf = ~[];
+
+        buf.push_all(self.next_idx.to_bytes(false));
+
+        for entry in self.entries.iter() {
+            match entry {
+                &UTF8(ref val)  => {
+                    buf.push(1);
+                    buf.push_all((val.len() as u16).to_bytes(false));
+                    let str_bytes = val.to_bytes(false);
+                    buf.push_all(str_bytes.slice(0, str_bytes.len() - 1));
+                },
+                &INTEGER(val)   => {
+                    buf.push(3);
+                    buf.push_all(val.to_bytes(false));
+                },
+                &FLOAT(val)     => {
+                    buf.push(4);
+                    buf.push_all(val.to_bytes(false));
+                },
+                &LONG(val)      => {
+                    buf.push(5);
+                    buf.push_all(val.to_bytes(false));
+                },
+                &DOUBLE(val)    => {
+                    buf.push(6);
+                    buf.push_all(val.to_bytes(false));
+                },
+                &CLASS(ref_idx) => {
+                    buf.push(7);
+                    buf.push_all(ref_idx.to_bytes(false));
+                },
+                &STRING(ref_idx) => {
+                    buf.push(8);
+                    buf.push_all(ref_idx.to_bytes(false));
+                },
+                &FIELD_REF(class_ref, name_and_type) => {
+                    buf.push(9);
+                    buf.push_all(class_ref.to_bytes(false));
+                    buf.push_all(name_and_type.to_bytes(false));
+                },
+                &METHOD_REF(class_ref, name_and_type) => {
+                    buf.push(10);
+                    buf.push_all(class_ref.to_bytes(false));
+                    buf.push_all(name_and_type.to_bytes(false));
+                },
+                &INTERFACE_METHOD_REF(class_ref, name_and_type) => {
+                    buf.push(11);
+                    buf.push_all(class_ref.to_bytes(false));
+                    buf.push_all(name_and_type.to_bytes(false));
+                },
+                &NAME_AND_TYPE(name_ref, type_ref) => {
+                    buf.push(12);
+                    buf.push_all(name_ref.to_bytes(false));
+                    buf.push_all(type_ref.to_bytes(false));
+                },
+                &METHOD_HANDLE(kind, ref_idx) => {
+                    buf.push(15);
+                    buf.push(kind);
+                    buf.push_all(ref_idx.to_bytes(false));
+                },
+                &METHOD_TYPE(descriptor_ref) => {
+                    buf.push(16);
+                    buf.push_all(descriptor_ref.to_bytes(false));
+                },
+                &INVOKE_DYNAMIC(bootstrap_idx, name_and_type) => {
+                    buf.push(18);
+                    buf.push_all(bootstrap_idx.to_bytes(false));
+                    buf.push_all(name_and_type.to_bytes(false));
+                }
+            }
+        };
+
+        buf
     }
 }
 
@@ -49,68 +151,21 @@ fn compile() {
     file.write_be_u32(0xCAFEBABE);
     file.write_be_u16(minor);
     file.write_be_u16(major);
-    
-    file.write_be_u16(12); // Entries in constantpool
 
-    // 1: Str: <init> method name
-    let init_name = "<init>";
-    file.write_u8(1); 
-    file.write_be_u16(init_name.len() as u16);
-    file.write_str(init_name);
+    let mut cpool = CPool::new();
+    cpool.add_entry(UTF8(~"<init>"));
+    cpool.add_entry(UTF8(~"()V"));
+    cpool.add_entry(UTF8(~"java/lang/Object"));
+    cpool.add_entry(UTF8(~"main"));
+    cpool.add_entry(UTF8(~"([Ljava/lang/String;)V"));
+    cpool.add_entry(UTF8(~"CompilerTest"));
+    cpool.add_entry(NAME_AND_TYPE(1, 2));
+    cpool.add_entry(CLASS(3));
+    cpool.add_entry(CLASS(6));
+    cpool.add_entry(METHOD_REF(8, 7));
+    cpool.add_entry(UTF8(~"Code"));
 
-    // 2: Str: <init> method signature
-    let init_sig = "()V";
-    file.write_u8(1);
-    file.write_be_u16(init_sig.len() as u16);
-    file.write_str(init_sig);
-
-    // 3: Str: <init> origin class
-    let obj_name = "java/lang/Object";
-    file.write_u8(1);
-    file.write_be_u16(obj_name.len() as u16);
-    file.write_str(obj_name);
-
-    // 4: Str: main method name
-    let main_name = "main";
-    file.write_u8(1);
-    file.write_be_u16(main_name.len() as u16);
-    file.write_str(main_name);
-
-    // 5: Str: main method signature
-    let main_sig = "([Ljava/lang/String;)V";
-    file.write_u8(1);
-    file.write_be_u16(main_sig.len() as u16);
-    file.write_str(main_sig);
-
-    // 6: Str: main method origin class
-    let comptest_name = "CompilerTest";
-    file.write_u8(1);
-    file.write_be_u16(comptest_name.len() as u16);
-    file.write_str(comptest_name);
-
-    // 7: NameAndType: <init>
-    file.write_u8(12);
-    file.write_be_u16(1);   // Ref to first entry
-    file.write_be_u16(2);   // Ref to second entry
-
-    // 8: Class: Object
-    file.write_u8(7);
-    file.write_be_u16(3);   // Ref to third entry
-
-    // 9: Class: CompilerTest
-    file.write_u8(7);
-    file.write_be_u16(6);   // Ref to sixth entry
-
-    // 10: Method ref: <init>
-    file.write_u8(10);
-    file.write_be_u16(8);
-    file.write_be_u16(7);
-
-    // 11: String: Code
-    file.write_u8(1);
-    file.write_be_u16(4);
-    file.write_str("Code");
-
+    file.write(cpool.to_vec());
 
     file.write_be_u16(0x0020 | 0x0001); // public super
     file.write_be_u16(9);   // Ref to 9th entry: this class
