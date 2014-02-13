@@ -7,19 +7,19 @@ fn main() {
 }
 
 mod AccessFlags {
-    const PUBLIC: u16       = 0x0001;
-    const PRIVATE: u16      = 0x0002;
-    const PROTECTED: u16    = 0x0004;
-    const STATIC: u16       = 0x0008;
-    const FINAL: u16        = 0x0010;
-    const SUPER: u16        = 0x0020;
-    const VOLATILE: u16     = 0x0040;
-    const TRANSIENT: u16    = 0x0080;
-    const INTERFACE: u16    = 0x0200;
-    const ABSTRACT: u16     = 0x0400;
-    const SYNTHETIC: u16    = 0x1000;
-    const ANNOTATION: u16   = 0x2000;
-    const ENUM: u16         = 0x4000;
+    static PUBLIC: u16       = 0x0001;
+    static PRIVATE: u16      = 0x0002;
+    static PROTECTED: u16    = 0x0004;
+    static STATIC: u16       = 0x0008;
+    static FINAL: u16        = 0x0010;
+    static SUPER: u16        = 0x0020;
+    static VOLATILE: u16     = 0x0040;
+    static TRANSIENT: u16    = 0x0080;
+    static INTERFACE: u16    = 0x0200;
+    static ABSTRACT: u16     = 0x0400;
+    static SYNTHETIC: u16    = 0x1000;
+    static ANNOTATION: u16   = 0x2000;
+    static ENUM: u16         = 0x4000;
 }
 
 enum CPoolEntry {
@@ -44,6 +44,12 @@ struct CPool {
     next_idx: u16,
     kv_map: ~HashMap<uint, u16>,
     vk_map: ~HashMap<u16, uint>
+}
+
+struct Method {
+    max_stack: u8,
+    max_locals: u8,
+    code: ~[u8]
 }
 
 impl CPool {
@@ -154,6 +160,16 @@ impl CPool {
         };
 
         buf
+    }
+}
+
+impl Method {
+    fn new() -> Method {
+        Method {
+            max_stack: 0,
+            max_locals: 0,
+            code: ~[]
+        }
     }
 }
 
