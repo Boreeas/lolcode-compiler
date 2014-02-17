@@ -34,11 +34,11 @@ enum CPoolEntry {
     CLASS(u16),                     // name_ref 
     STRING(u16),                    // content_ref
     FIELD_REF(u16, u16),            // class_ref, name_any_type
-    CodeAttr_REF(u16, u16),           // class_ref, name_and_type
-    INTERFACE_CodeAttr_REF(u16, u16), // class_ref, name_and_type
+    METHOD_REF(u16, u16),           // class_ref, name_and_type
+    INTERFACE_METHOD_REF(u16, u16), // class_ref, name_and_type
     NAME_AND_TYPE(u16, u16),        // name_ref, type_ref
-    CodeAttr_HANDLE(u8, u16),         // kind, reference
-    CodeAttr_TYPE(u16),               // descriptor_ref
+    METHOD_HANDLE(u8, u16),         // kind, reference
+    METHOD_TYPE(u16),               // descriptor_ref
     INVOKE_DYNAMIC(u16, u16)        // bootstrep_idx, name_and_type
 }
 
@@ -407,12 +407,12 @@ impl CPool {
                     buf.push_all(class_ref.to_bytes(false));
                     buf.push_all(name_and_type.to_bytes(false));
                 },
-                &CodeAttr_REF(class_ref, name_and_type) => {
+                &METHOD_REF(class_ref, name_and_type) => {
                     buf.push(10);
                     buf.push_all(class_ref.to_bytes(false));
                     buf.push_all(name_and_type.to_bytes(false));
                 },
-                &INTERFACE_CodeAttr_REF(class_ref, name_and_type) => {
+                &INTERFACE_METHOD_REF(class_ref, name_and_type) => {
                     buf.push(11);
                     buf.push_all(class_ref.to_bytes(false));
                     buf.push_all(name_and_type.to_bytes(false));
@@ -422,12 +422,12 @@ impl CPool {
                     buf.push_all(name_ref.to_bytes(false));
                     buf.push_all(type_ref.to_bytes(false));
                 },
-                &CodeAttr_HANDLE(kind, ref_idx) => {
+                &METHOD_HANDLE(kind, ref_idx) => {
                     buf.push(15);
                     buf.push(kind);
                     buf.push_all(ref_idx.to_bytes(false));
                 },
-                &CodeAttr_TYPE(descriptor_ref) => {
+                &METHOD_TYPE(descriptor_ref) => {
                     buf.push(16);
                     buf.push_all(descriptor_ref.to_bytes(false));
                 },
@@ -545,41 +545,170 @@ impl CodeAttr {
 }
 
 
+struct Field {
+    access_flags: u16,
+    name_idx: u16,
+    desc_idx: u16
+}
+
+impl Field {
+    fn new(name_idx: u16, desc_idx: u16) -> Field {
+        Field {
+            access_flags: 0,
+            name_idx: name_idx,
+            desc_idx: desc_idx
+        }
+    }
+
+    fn add_accflags(&mut self, accflags: u16) {
+        self.access_flags |= accflags
+    }
+
+    fn set_accflags(&mut self, accflags: u16) {
+        self.access_flags = accflags
+    }
+
+    fn to_vec(&self) -> ~[u8] {
+        let mut buf = ~[];
+
+        buf.push_all(self.access_flags.to_bytes(false));
+        buf.push_all(self.name_idx.to_bytes(false));
+        buf.push_all(self.desc_idx.to_bytes(false));
+        buf.push(0); buf.push(0);   // Not attributes
+
+        buf
+    }
+}
+
+
+struct ClassFile {
+    major: u16,
+    minor: u16,
+    cpool: CPool,
+    this_class: u16,
+    super_class: u16,
+    access_flags: u16,
+    interfaces: ~[u16],
+    fields: ~[Field],
+    methods: ~[Method],
+}
+
+impl ClassFile {
+    fn new(major: u16, minor: u16, this_class: ~str, super_class: ~str) -> ClassFile {
+        
+        let mut pool = CPool::new();
+        pool.add_entry(UTF8(~"Code"));  // Always have the code attribute first
+        
+        let this_class_name_idx = pool.add_entry(UTF8(this_class));
+        let super_class_name_idx = pool.add_entry(UTF8(super_class));
+        
+        let this_class_idx = pool.add_entry(CLASS(this_class_name_idx));
+        let super_class_idx = pool.add_entry(CLASS(super_class_name_idx));
+
+        ClassFile {
+            major: major,
+            minor: minor,
+            cpool: pool,
+            this_class: this_class_idx,
+            super_class: super_class_idx,
+            access_flags: 0,
+            interfaces: ~[],
+            fields: ~[],
+            methods: ~[],
+        }
+    }
+
+    fn get_cpool<'a>(&'a mut self) -> &'a mut CPool {
+        &mut self.cpool
+    }
+
+    fn get_immut_cpool<'a>(&'a self) -> &'a CPool {
+        &self.cpool
+    }
+
+    fn add_accflags(&mut self, accflags: u16) {
+        self.access_flags |= accflags;
+    }
+
+    fn set_accflags(&mut self, accflags: u16) {
+        self.access_flags = accflags;
+    }
+
+    fn add_interface(&mut self, idx: u16) {
+        self.interfaces.push(idx)
+    }
+
+    fn add_field(&mut self, field: Field) {
+        self.fields.push(field);
+    }
+
+    fn add_method(&mut self, method: Method) {
+        self.methods.push(method);
+    }
+
+    fn to_vec(&self) -> ~[u8] {
+        let mut buf = ~[];
+
+        buf.push_all(0xCAFEBABEu32.to_bytes(false));
+        buf.push_all(self.minor.to_bytes(false));
+        buf.push_all(self.major.to_bytes(false));
+
+        buf.push_all(self.cpool.to_vec());
+
+        buf.push_all(self.access_flags.to_bytes(false));
+        buf.push_all(self.this_class.to_bytes(false));
+        buf.push_all(self.super_class.to_bytes(false));
+
+        buf.push_all((self.interfaces.len() as u16).to_bytes(false));
+        for idx in self.interfaces.iter() {
+            buf.push_all(idx.to_bytes(false));
+        }
+
+        buf.push_all((self.fields.len() as u16).to_bytes(false));
+        for field in self.fields.iter() {
+            buf.push_all(field.to_vec());
+        }
+
+        buf.push_all((self.methods.len() as u16).to_bytes(false));
+        for method in self.methods.iter() {
+            buf.push_all(method.to_vec());
+        }
+
+        buf.push(0); buf.push(0);   // No attributes
+
+        buf
+    }
+}
+
+
 
 fn compile() {
-    let mut file = File::create(&Path::new("CompilerTest.class"));
+
     let minor = 0;
     let major = 51;
-    
-    file.write_be_u32(0xCAFEBABE);
-    file.write_be_u16(minor);
-    file.write_be_u16(major);
+    let mut cf = ClassFile::new(major, minor, ~"CompilerTest", ~"java/lang/Object");
+    cf.set_accflags(AccessFlags::PUBLIC | AccessFlags::SUPER);
 
-    let mut cpool = CPool::new();
-    cpool.add_entry(UTF8(~"Code"));
-    cpool.add_entry(UTF8(~"<init>"));
-    cpool.add_entry(UTF8(~"()V"));
-    cpool.add_entry(UTF8(~"java/lang/Object"));
-    cpool.add_entry(UTF8(~"main"));
-    cpool.add_entry(UTF8(~"([Ljava/lang/String;)V"));
-    cpool.add_entry(UTF8(~"CompilerTest"));
-    cpool.add_entry(NAME_AND_TYPE(2, 3));
-    cpool.add_entry(CLASS(4));
-    cpool.add_entry(CLASS(7));
-    cpool.add_entry(CodeAttr_REF(9, 8));
 
-    file.write(cpool.to_vec());
+    let init_name_idx;
+    let init_sig_idx;
+    let main_name_idx;
+    let main_sig_idx;
+    let init_name_and_type;
+    let init_ref;
 
-    file.write_be_u16(0x0020 | 0x0001); // public super
-    file.write_be_u16(10);   // Ref to 9th entry: this class
-    file.write_be_u16(9);   // Ref to 8th entry: super class
-
-    file.write_be_u16(0);   // No interfaces
-    file.write_be_u16(0);   // No fields
-    file.write_be_u16(2);   // 2 Methods
+    {    
+        let cpool = cf.get_cpool();
+        init_name_idx = cpool.add_entry(UTF8(~"<init>"));
+        init_sig_idx = cpool.add_entry(UTF8(~"()V"));
+        main_name_idx = cpool.add_entry(UTF8(~"main"));
+        main_sig_idx = cpool.add_entry(UTF8(~"([Ljava/lang/String;)V"));
+        init_name_and_type = cpool.add_entry(NAME_AND_TYPE(init_name_idx, init_sig_idx));
+        init_ref = cpool.add_entry(METHOD_REF(cf.super_class, init_name_and_type));
+    }
 
     // Method 1: <init>
-    let mut init = Method::new(2, 3);
+    let mut init = Method::new(init_name_idx, init_sig_idx);
     init.get_code().inc_max_locals();
     init.get_code().inc_max_stack();
     init.get_code()
@@ -587,39 +716,19 @@ fn compile() {
         .push_opcode(INVOKESPECIAL(11))
         .push_opcode(RETURN);
 
-/*
-    file.write_be_u16(1);   // Max stack depth 1
-    file.write_be_u16(1);   // Max locals 1
-    file.write_be_u32(5);   // 5 bytes of code
-    file.write_u8(0x21);
-    file.write_u8(0x00);
-    file.write_u8(0x0a);
-    file.write_u8(0xb1);    // return
-    file.write_be_u16(0);   // no exception handlers
-    file.write_be_u16(0);   // No attributes
-*/
-    file.write(init.to_vec());
+    cf.add_method(init);
 
     // Method 2: main
-    let mut main = Method::new(5, 6);
+    let mut main = Method::new(main_name_idx, main_sig_idx);
     main.set_accflags(AccessFlags::PUBLIC | AccessFlags::STATIC);
     main.get_code().inc_max_locals();
     main.get_code().inc_max_stack();
     main.get_code().push_opcode(RETURN);
 
-/*
-    file.write_be_u16(1);   // Max stack depth 1
-    file.write_be_u16(1);   // Max locals 1
-    file.write_be_u32(1);   // 5 bytes of code
-    file.write_u8(0xb1);    // return
-    file.write_be_u16(0);   // no exception handlers
-    file.write_be_u16(0);   // No attributes
-*/
+    cf.add_method(main);
 
-    file.write(main.to_vec());
 
-    // No classfile attributes
-    file.write_be_u16(0);
-
+    let mut file = File::create(&Path::new("CompilerTest.class"));
+    file.write(cf.to_vec());
     file.flush();
 }
